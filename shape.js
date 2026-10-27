@@ -132,15 +132,57 @@
 
   const fix = (v, d = 2) => (Math.round(v * 10 ** d) / 10 ** d).toFixed(d);
 
+  /** 点 (x, y) が閉曲線の内側にあるか（偶奇の数え方） */
+  function inside(pts, x, y) {
+    let inn = false;
+    for (let i = 0, n = pts.length, j = n - 1; i < n; j = i++) {
+      const a = pts[i], b = pts[j];
+      if ((a.y > y) !== (b.y > y) && x < a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x)) inn = !inn;
+    }
+    return inn;
+  }
+
+  const finite = v => v !== undefined && v !== null && v !== '' && Number.isFinite(+v);
+  /** 長穴か（終点があって、始点と違う） */
+  const isSlot = h => finite(h.xEnd) && finite(h.yEnd) && (+h.xEnd !== +h.x || +h.yEnd !== +h.y);
+
+  /** 穴を反対の眼へ左右反転する（箱中心基準なので x の符号を変えるだけ） */
+  function mirrorHole(h) {
+    const o = Object.assign({}, h, { x: -h.x });
+    if (isSlot(h)) o.xEnd = -h.xEnd;
+    return o;
+  }
+
+  /**
+   * 穴の一覧を DRILLE レコードの文字列にする（基準 C＝箱中心、取付面は前面）。
+   * 書式は vca-guide の drillRecords と同じ：眼;C;x;y;径[;終点 x;終点 y]（mm、小数 2 けた、末尾の空欄は書かない）。
+   * holes の各要素は { eye: 'R'|'L', x, y, diameter, xEnd?, yEnd? }。穴が無いときは DRILLE=0（DCS 5.5.2）。
+   */
+  function drillRecords(holes) {
+    if (!holes || !holes.length) return ['DRILLE=0'];
+    return holes.map((h, i) => {
+      if (!/^[RL]$/.test(h.eye)) throw new Error(`穴 ${i + 1}：眼の指定が不正です`);
+      if (!finite(h.x) || !finite(h.y)) throw new Error(`穴 ${i + 1}：位置がありません`);
+      const f = [h.eye, 'C', fix(+h.x), fix(+h.y), finite(h.diameter) ? fix(+h.diameter) : ''];
+      if (isSlot(h)) f.push(fix(+h.xEnd), fix(+h.yEnd));
+      while (f.length > 4 && f[f.length - 1] === '') f.pop();
+      return 'DRILLE=' + f.join(';');
+    });
+  }
+
   /**
    * 画像上の閉曲線（画素、y 下向き）から VCA の中身を作る。
    *   widthMM  玉形幅（A 寸、mm）。溝補正を足したあとの幅がこの値になるように縮尺を決める
    *   eye      写した眼（'R' か 'L'）。もう片方の眼は左右反転して書く
    *   groove   リムの内側の縁から溝の底までの補正（mm、外側へ広げる）
    *   dbl, fcrv, job, n（点の数。既定 360）
+   *   holes    写した眼の穴（縁なしフレームの取付穴）。[{ x, y, diameter, xEnd?, yEnd? }]（mm、玉形の箱中心から、
+   *            正面視で x 右・y 上）。もう片方の眼には左右反転して DRILLE に書く。空なら DRILLE=0
+   * 返り値の toMM・toPx は、画像の画素と「箱中心からの mm」を行き来する（穴の表示に使う）。
+   * holes には、中心（長穴は終点も）が書いた玉形の内側にあるかを inside に入れて返す。
    */
   function toVCA(ptsPx, opts) {
-    const o = Object.assign({ widthMM: 52, eye: 'R', groove: 0.5, dbl: 18, fcrv: 4, job: 'SHAPE', n: 360 }, opts);
+    const o = Object.assign({ widthMM: 52, eye: 'R', groove: 0.5, dbl: 18, fcrv: 4, job: 'SHAPE', n: 360, holes: [] }, opts);
     const up = ptsPx.map(p => ({ x: p.x, y: -p.y }));
     const b0 = bbox(up);
     if (!(b0.w > 0) || !(b0.h > 0)) throw new Error('形がありません');
@@ -155,17 +197,25 @@
     const written = traced.map((r, i) => ({ x: r * Math.cos((2 * Math.PI * i) / o.n), y: r * Math.sin((2 * Math.PI * i) / o.n) }));
     const wb = bbox(written);
     const hbox = wb.w, vbox = wb.h, circ = perimeter(written), ed = 2 * Math.max(...traced);
+    // 穴の座標は、半径を測った中心（箱中心）からの mm
+    const toMM = p => ({ x: (p.x - b0.cx) * s - bb.cx, y: (-p.y - b0.cy) * s - bb.cy });
+    const toPx = q => ({ x: (q.x + bb.cx) / s + b0.cx, y: -((q.y + bb.cy) / s + b0.cy) });
+    const holes = (o.holes || []).map(h => Object.assign({}, h, { eye: o.eye,
+      inside: inside(written, +h.x, +h.y) && (!isSlot(h) || inside(written, +h.xEnd, +h.yEnd)) }));
+    const plain = holes.map(({ inside: _, ...h }) => h);
+    const flipped = plain.map(h => Object.assign(mirrorHole(h), { eye: o.eye === 'L' ? 'R' : 'L' }));
+    const drills = o.eye === 'L' ? flipped.concat(plain) : plain.concat(flipped);   // 右眼を先に書く
     const recs = [];
     const both = v => `${fix(v)};${fix(v)}`;
     recs.push('REQ=FIL', `JOB=${String(o.job || 'SHAPE').replace(/[\r\n;]/g, ' ').slice(0, 30)}`, `DBL=${fix(o.dbl)}`,
-      `HBOX=${both(hbox)}`, `VBOX=${both(vbox)}`, `CIRC=${both(circ)}`, `FCRV=${both(o.fcrv)}`);
+      `HBOX=${both(hbox)}`, `VBOX=${both(vbox)}`, `CIRC=${both(circ)}`, `FCRV=${both(o.fcrv)}`, ...drillRecords(drills));
     for (const e of ['R', 'L']) {
       recs.push(`TRCFMT=1;${o.n};E;${e};F`);
       const vals = radii[e].map(r => Math.round(r * 100));
       for (let i = 0; i < vals.length; i += 15) recs.push('R=' + vals.slice(i, i + 15).join(';'));
     }
-    return { text: recs.join('\r\n') + '\r\n', hbox, vbox, circ, ed, radii, outline: mm };
+    return { text: recs.join('\r\n') + '\r\n', hbox, vbox, circ, ed, radii, outline: mm, holes, drills, toMM, toPx };
   }
 
-  return { spline, bbox, area, perimeter, resampleArc, superellipse, polarRadii, offset, mirrorRadii, toVCA };
+  return { spline, bbox, area, perimeter, resampleArc, superellipse, polarRadii, offset, mirrorRadii, inside, mirrorHole, drillRecords, toVCA };
 });

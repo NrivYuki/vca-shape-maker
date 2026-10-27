@@ -22,7 +22,7 @@ module.exports = async (t) => {
   await t.shot('01-start');
 
   // 2. タブ
-  for (const p of ['shape', 'size', 'vca', 'img']) {
+  for (const p of ['shape', 'size', 'hole', 'vca', 'img']) {
     await click(`.tabs [data-pane=${p}]`);
     ok(await visiblePanes() === 'pane-' + p, `タブ ${p} を押すとその面だけ見える`);
   }
@@ -75,6 +75,66 @@ module.exports = async (t) => {
   await click('#redo'); await raf();
   ok(await t.eval('st.ctrl.length') === 0, 'やり直す');
   await click('#undo'); await raf();
+
+  // 7b. 穴（縁なしフレーム）：数値で足す・直す・長穴・画像の上で置く・ドラッグ・外の知らせ・反転・削除
+  // 書き出す本文（CR LF のまま）から DRILLE を拾う。テキスト欄の値は改行が LF になるので使わない
+  const drills = async () => ((await t.eval(`st.out ? st.out.text : ''`)).match(/^DRILLE=[^\r\n]*/gm) || []);
+  const setHole = (i, k, v) => t.eval(`(() => { const e = document.querySelector('#holes .hole:nth-child(${i}) [data-k=${k}]'); e.value = ${JSON.stringify(v)}; e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  const atPx = (fn, x0, y0, x1, y1) => t.eval(`(() => { const c = ${$('stage')}, r = c.getBoundingClientRect();
+    const ev = (type, x, y) => c.dispatchEvent(new PointerEvent(type, { clientX: r.left + x, clientY: r.top + y, button: 0, buttons: 1, bubbles: true, pointerId: 1, isPrimary: true }));
+    ${fn} })()`);
+  await click('.tabs [data-pane=hole]'); await raf(); await raf();
+  ok(await visiblePanes() === 'pane-hole', '穴のタブを押すとその面だけ見える');
+  ok((await drills()).join() === 'DRILLE=0', '穴が無いとき VCA に DRILLE=0 を書く: ' + (await drills()).join(' '));
+  ok((await text('holeNote')).includes('DRILLE=0'), '穴が無いときの説明: ' + await text('holeNote'));
+  await click('#holeAdd'); await raf(); await raf();
+  const hb = await t.eval('st.out.hbox');
+  const ax = (Math.round((hb / 2 - 3) * 100) / 100).toFixed(2);
+  ok((await drills()).join() === `DRILLE=R;C;${ax};0.00;1.40,DRILLE=L;C;-${ax};0.00;1.40`, `「穴を足す」で右眼の鼻側（+x）に穴、左眼は x を反転: ${(await drills()).join(' ')}`);
+  await setHole(1, 'x', '10'); await setHole(1, 'y', '3.5'); await setHole(1, 'diameter', '1.2'); await raf(); await raf();
+  ok((await drills()).join() === 'DRILLE=R;C;10.00;3.50;1.20,DRILLE=L;C;-10.00;3.50;1.20', '数値で位置と径を直せる: ' + (await drills()).join(' '));
+  await setHole(1, 'xEnd', '12.5'); await setHole(1, 'yEnd', '3.5'); await raf(); await raf();
+  ok((await drills()).join() === 'DRILLE=R;C;10.00;3.50;1.20;12.50;3.50,DRILLE=L;C;-10.00;3.50;1.20;-12.50;3.50', '終点を入れると長穴になり、反対の眼は終点の x も反転: ' + (await drills()).join(' '));
+  await setHole(1, 'yEnd', ''); await raf(); await raf();
+  ok((await text('msg')).includes('両方'), '長穴の終点が片方だけなら誤りと知らせる: ' + await text('msg'));
+  await setHole(1, 'xEnd', ''); await raf(); await raf();
+  ok((await drills()).length === 2 && !(await text('msg')).includes('両方'), '終点を両方空にすると丸穴に戻り、知らせが消える');
+  // 画像の上で置く：箱の中心をクリックすると、ほぼ (0, 0) に穴
+  await click('#modeHole');
+  ok(await t.eval('st.mode') === 'hole', '「画像の上で置く」で穴を置く状態になる');
+  const c0 = await t.eval(`(() => { const q = holeScr(0, 0); return [q.x, q.y]; })()`);
+  await atPx(`ev('pointerdown', ${c0[0]}, ${c0[1]}); ev('pointerup', ${c0[0]}, ${c0[1]});`); await raf(); await raf();
+  const h2 = await t.eval('st.holes[1]');
+  ok(h2 && Math.abs(h2.x) < 0.2 && Math.abs(h2.y) < 0.2 && h2.diameter === 1.2, `画像の箱の中心をクリックすると穴 2 が (0, 0) 付近に、径は前の穴と同じ: ${JSON.stringify(h2)}`);
+  await t.eval(`setMode('edit')`);
+  // ドラッグで動かす：右へ 30 画素 → x が増え、数値の欄も変わる
+  const ctrl0 = await t.eval('JSON.stringify(st.ctrl)');
+  await atPx(`ev('pointerdown', ${c0[0]}, ${c0[1]}); for (let k = 1; k <= 5; k++) ev('pointermove', ${c0[0]} + 6 * k, ${c0[1]}); ev('pointerup', ${c0[0] + 30}, ${c0[1]});`); await raf(); await raf();
+  const moved = await t.eval(`[st.holes[1].x, st.holes[1].y, +document.querySelector('#holes .hole:nth-child(2) [data-k=x]').value]`);
+  ok(moved[0] > 1 && Math.abs(moved[1] - h2.y) < 0.05 && moved[2] === moved[0], `穴をドラッグで動かすと x が増え、数値の欄も変わる: ${moved}`);
+  ok(await t.eval('JSON.stringify(st.ctrl)') === ctrl0, '穴のドラッグで形は動かない');
+  // 玉形の外
+  await setHole(2, 'x', '40'); await raf(); await raf();
+  ok((await text('msg')).includes('穴 2') && (await text('msg')).includes('外'), '穴の中心が玉形の外なら知らせる: ' + await text('msg'));
+  ok(await t.eval(`document.querySelector('#holes .hole:nth-child(2) .st').classList.contains('out')`), '外の穴は一覧でも「玉形の外」');
+  await t.shot('07b-hole-outside');
+  await setHole(2, 'x', '-15'); await raf(); await raf();
+  ok(!(await text('msg')).includes('外'), '内側に直すと知らせが消える');
+  // 写した眼を左眼にすると、入力した穴が L、反転した穴が R になる（右眼を先に書く）
+  await t.eval(`(() => { const e = ${$('eye')}; e.value = 'L'; e.dispatchEvent(new Event('input', {bubbles:true})); })()`); await raf(); await raf();
+  const dl = await drills();
+  ok(dl[0].startsWith('DRILLE=R;C;-10.00;3.50') && dl[1].startsWith('DRILLE=R;C;15.00') && dl[2].startsWith('DRILLE=L;C;10.00;3.50') && dl[3].startsWith('DRILLE=L;C;-15.00'), '左眼として写すと、左眼は入力のまま、右眼は x を反転: ' + dl.join(' '));
+  await t.eval(`(() => { const e = ${$('eye')}; e.value = 'R'; e.dispatchEvent(new Event('input', {bubbles:true})); })()`); await raf(); await raf();
+  ok((await text('sum')).includes('穴 2'), '下の帯に穴の数: ' + await text('sum'));
+  await click('.tabs [data-pane=vca]'); await raf(); await raf();
+  await t.shot('07b-hole-vca');
+  await click('.tabs [data-pane=hole]');
+  await t.shot('07b-hole');
+  // 削除
+  await click('#holes .hole:nth-child(1) [data-del]'); await raf(); await raf();
+  ok(await t.eval('st.holes.length') === 1 && (await drills())[0].startsWith('DRILLE=R;C;-15.00'), '穴 1 を削除すると、残った穴が穴 1 になる: ' + (await drills()).join(' '));
+  await click('#holes .hole:nth-child(1) [data-del]'); await raf(); await raf();
+  ok((await drills()).join() === 'DRILLE=0', 'すべて削除すると DRILLE=0 に戻る');
 
   // 8. サンプル画像からクリックで取り出す
   await click('.tabs [data-pane=img]');

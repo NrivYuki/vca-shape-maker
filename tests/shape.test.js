@@ -133,3 +133,58 @@ test('extract：リムが切れていると「閉じていない」', () => {
   const r = Extract.extract(img, 150, 140, 48);
   assert.equal(r.leaked, true); assert.equal(r.pts, null);
 });
+
+// 穴（DRILLE）は vca-guide のパーサーで読み直して確かめる（姉妹リポジトリを同じフォルダに並べて置いたとき）
+const path = require('node:path');
+const fs = require('node:fs');
+const guidePath = path.join(__dirname, '..', '..', 'vca-guide', 'src', 'vca-parser.js');
+const VCA = fs.existsSync(guidePath) ? require(guidePath) : null;
+const noGuide = VCA ? false : '../vca-guide が無いので飛ばす';
+const drillsOf = text => VCA.drillFeatures(VCA.parse(text));
+
+test('toVCA：穴が無いときは DRILLE=0 を 1 つ書き、パーサーでは「穴なし」', { skip: noGuide }, () => {
+  const px = Shape.superellipse({ x0: 100, y0: 100, x1: 400, y1: 320 }, [3, 3, 3, 3]);
+  const v = Shape.toVCA(px, { widthMM: 52 });
+  assert.deepEqual(v.text.match(/^DRILLE=[^\r]*/gm), ['DRILLE=0']);
+  assert.match(v.text, /FCRV=[^\r]*\r\nDRILLE=0\r\nTRCFMT=/);
+  assert.deepEqual(drillsOf(v.text), { status: 'none', features: [] });
+});
+
+test('toVCA：丸穴と長穴を DRILLE（基準 C）に書き、反対の眼は x を反転する（右眼・左眼）', { skip: noGuide }, () => {
+  const px = Shape.superellipse({ x0: 100, y0: 100, x1: 400, y1: 320 }, [3, 3, 3, 3]);
+  const holes = [{ x: 22.3, y: 4.1, diameter: 1.4 }, { x: -23, y: 3.5, diameter: 1.2, xEnd: -20.5, yEnd: 3.5 }];
+  for (const eye of ['R', 'L']) {
+    const v = Shape.toVCA(px, { widthMM: 52, eye, holes });
+    const d = drillsOf(v.text);
+    assert.equal(d.status, 'present'); assert.deepEqual(d.errors, []);
+    assert.equal(d.features.length, 4);
+    const other = eye === 'R' ? 'L' : 'R';
+    const mine = d.features.filter(f => f.eye === eye), theirs = d.features.filter(f => f.eye === other);
+    assert.equal(d.features[0].eye, 'R', '右眼を先に書く');
+    holes.forEach((h, i) => {
+      for (const [f, sx] of [[mine[i], 1], [theirs[i], -1]]) {
+        assert.equal(f.origin, 'C'); assert.equal(f.mount, 'F'); assert.equal(f.featureType, 1);
+        assert.equal(f.x, sx * h.x); assert.equal(f.y, h.y); assert.equal(f.diameter, h.diameter);
+        if (h.xEnd !== undefined) { assert.equal(f.shape, 'slot'); assert.equal(f.xEnd, sx * h.xEnd); assert.equal(f.yEnd, h.yEnd); }
+        else { assert.equal(f.shape, 'hole'); assert.equal(f.xEnd, undefined); }
+      }
+    });
+    // 書式は vca-guide の drillRecords と同じ
+    const want = VCA.drillRecords(v.drills.map(h => Object.assign({ origin: 'C' }, h))).map(r => r[0] + '=' + r.slice(1).join(';'));
+    assert.deepEqual(v.text.match(/^DRILLE=[^\r]*/gm), want);
+    assert.ok(v.holes.every(h => h.inside), '内側の穴は inside');
+  }
+});
+
+test('toVCA：穴の中心が玉形の外なら inside が false。toMM と toPx は行き来できる', () => {
+  const px = Shape.superellipse({ x0: 100, y0: 100, x1: 400, y1: 320 }, [3, 3, 3, 3]);
+  const v = Shape.toVCA(px, { widthMM: 52, holes: [{ x: 0, y: 0, diameter: 1.4 }, { x: 30, y: 0, diameter: 1.4 }, { x: 20, y: 0, xEnd: 27, yEnd: 0, diameter: 1.4 }] });
+  assert.deepEqual(v.holes.map(h => h.inside), [true, false, false]);
+  // 画像の箱の中心は、mm でほぼ 0（溝の補正は左右・上下に同じだけ広げるので中心は動かない）
+  const c = v.toMM({ x: 250, y: 210 });
+  near(c.x, 0, 0.01); near(c.y, 0, 0.01);
+  // 画像で右・上にある点は、mm で +x・+y
+  const q = v.toMM({ x: 300, y: 150 });
+  assert.ok(q.x > 0 && q.y > 0);
+  const p = v.toPx(q); near(p.x, 300, 1e-9); near(p.y, 150, 1e-9);
+});
