@@ -148,10 +148,13 @@
     if (!(s > 0)) throw new Error('玉形幅が溝補正に対して小さすぎます');
     const mm = offset(up.map(p => ({ x: (p.x - b0.cx) * s, y: (p.y - b0.cy) * s })), o.groove);
     const bb = bbox(mm);
-    const traced = polarRadii(mm, o.n, bb.cx, bb.cy);
+    // R レコードに書くのは 1/100 mm に丸めた半径。寸法もこの丸めた半径から計算して、書いた形と合わせる
+    const traced = polarRadii(mm, o.n, bb.cx, bb.cy).map(r => Math.round(r * 100) / 100);
     const other = mirrorRadii(traced);
     const radii = o.eye === 'L' ? { R: other, L: traced } : { R: traced, L: other };
-    const hbox = bb.w, vbox = bb.h, circ = perimeter(mm), ed = 2 * Math.max(...traced);
+    const written = traced.map((r, i) => ({ x: r * Math.cos((2 * Math.PI * i) / o.n), y: r * Math.sin((2 * Math.PI * i) / o.n) }));
+    const wb = bbox(written);
+    const hbox = wb.w, vbox = wb.h, circ = perimeter(written), ed = 2 * Math.max(...traced);
     const recs = [];
     const both = v => `${fix(v)};${fix(v)}`;
     recs.push('REQ=FIL', `JOB=${String(o.job || 'SHAPE').replace(/[\r\n;]/g, ' ').slice(0, 30)}`, `DBL=${fix(o.dbl)}`,

@@ -82,6 +82,24 @@ test('toVCA：1440 点でも書ける（R・L とも 1440 点、L は R の左�
   for (let a = 0; a < 360; a += 15) near(v.radii.R[a * 4], w.radii.R[a], 1e-9);
 });
 
+test('toVCA：書いた HBOX・VBOX・CIRC は R レコードの半径から計算した値と一致する（360 点と 1440 点）', () => {
+  const px = Shape.superellipse({ x0: 100, y0: 100, x1: 400, y1: 320 }, [6, 3, 2.5, 3]);
+  for (const n of [360, 1440]) for (const eye of ['R', 'L']) {
+    const v = Shape.toVCA(px, { widthMM: 52, n, eye });
+    const field = k => Number(v.text.match(new RegExp(`^${k}=([^;\\r]+);`, 'm'))[1]);
+    const blocks = v.text.split(/TRCFMT=[^\r]*\r\n/).slice(1).map(b => b.match(/R=[^\r]*/g).join(';').replace(/R=/g, '').split(';').map(Number));
+    // 返り値の radii と R レコードの値が同じ
+    blocks.forEach((vals, k) => vals.forEach((r, i) => near(v.radii['RL'[k]][i] * 100, r, 1e-6, `${n} 点 ${'RL'[k]}[${i}]`)));
+    for (const vals of blocks) {
+      const pts = vals.map((r, i) => ({ x: (r / 100) * Math.cos((2 * Math.PI * i) / n), y: (r / 100) * Math.sin((2 * Math.PI * i) / n) }));
+      const b = Shape.bbox(pts);
+      near(field('HBOX'), b.w, 0.005, `${n} 点 HBOX`);
+      near(field('VBOX'), b.h, 0.005, `${n} 点 VBOX`);
+      near(field('CIRC'), Shape.perimeter(pts), 0.005, `${n} 点 CIRC`);
+    }
+  }
+});
+
 test('toVCA：形がないときと、A 寸が小さすぎるときはエラー', () => {
   assert.throws(() => Shape.toVCA([{ x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }], {}), /形がありません/);
   assert.throws(() => Shape.toVCA(circle(10, 36, 50, 50), { widthMM: 1, groove: 0.5 }), /小さすぎ/);
