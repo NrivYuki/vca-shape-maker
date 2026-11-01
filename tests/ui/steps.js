@@ -31,8 +31,23 @@ module.exports = async (t) => {
   ok(await t.eval(`[...document.querySelectorAll('.tabs [role=tab]')].every(b => b.tabIndex === (b.getAttribute('aria-selected') === 'true' ? 0 : -1) && document.getElementById(b.getAttribute('aria-controls'))?.getAttribute('aria-labelledby') === b.id)`), 'タブは選んだものだけ Tab キーで止まり、中身の面と結び付いている');
   await click('.tabs [data-pane=img]');
 
-  // 3. 白紙に箱を描いて作る
+  // 2b. 画像の読み込み: ファイルを置く(OS からのドラッグ)・貼り付け(Ctrl+V)。画像でないファイルは断る
+  const png = require('fs').readFileSync(await t.shot('02b-drop-source'));
+  await t.drop('#drop', [['drop-test.png', png]]); await t.sleep(800);
+  ok(/^drop-test\.png: \d+ × \d+ 画素$/.test(await text('imgInfo')), '画像のファイルを置くと読み込む: ' + await text('imgInfo'));
+  await t.drop('#drop', [['frame.vca', 'REQ=FIL\r\n']]); await t.sleep(400);
+  ok((await text('msg')).includes('画像ファイルを選んでください') && (await text('imgInfo')).startsWith('drop-test.png'), '画像でないファイルを置くと断り、前の画像のまま: ' + await text('msg'));
+  await t.eval(`(async () => { const c = document.createElement('canvas'); c.width = 40; c.height = 30;
+    const b = await new Promise(r => c.toBlob(r, 'image/png')); const dt = new DataTransfer(); dt.items.add(new File([b], 'clip.png', { type: 'image/png' }));
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt })); })()`); await t.sleep(800);
+  ok((await text('imgInfo')).endsWith('40 × 30 画素'), '画像を貼り付けると読み込む: ' + await text('imgInfo'));
+  await click('#blank'); await raf();
+  ok(await t.eval('st.mode') === 'box' && (await text('imgInfo')).includes('白紙'), '白紙にすると、画像を外して箱を描く状態になる');
   await click('#modeBox');
+  ok(await t.eval('st.mode') === 'edit', '「箱を描いて作る」をもう一度押すと、箱を描く状態をやめる');
+  await click('#modeBox');
+
+  // 3. 白紙に箱を描いて作る(白紙にしたので、箱を描く状態になっている)
   await drag(0.3, 0.3, 0.7, 0.65); await raf(); await raf();
   ok(await t.eval('st.ctrl.length') >= 3, '箱を描くと形ができる(点 ' + await t.eval('st.ctrl.length') + ')');
   ok((await text('sum')).includes('玉形'), '下の帯に寸法: ' + await text('sum'));
