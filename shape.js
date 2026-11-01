@@ -171,18 +171,55 @@
   }
 
   /**
+   * JOB の値(DCS の limited 型)。空か ? なら不明値 ?(表 A.2 の JOB)。
+   * limited は ASCII 12 文字まで(5.1.8.3)。文字は 32-127 で ; を除く(5.1.8.1。制御文字は 32 未満の文字、3.2.12)。
+   * 予約文字(表 1 の = , * ? |)は区切りなどの役割にだけ使う(5.1.7.2)ので値に入れない。
+   */
+  function jobValue(job) {
+    const s = String(job ?? '').trim();
+    if (s === '' || s === '?') return '?';
+    if (s.length > 12) throw new Error(`JOB は 12 文字までです(いま ${s.length} 文字)`);
+    if (/[^\x20-\x7f]/.test(s)) throw new Error('JOB には半角の英数字と記号だけを使えます');
+    const bad = s.match(/[;=,*?|]/);
+    if (bad) throw new Error(`JOB に「${bad[0]}」は使えません(区切りなどに使う文字です)`);
+    return s;
+  }
+
+  /**
+   * 値を ; で区切った「ラベル=値」の行にする。1 行に per 個ずつ並べ、80 文字(5.4.15.1)を超える行だけは
+   * 収まるところで分ける(半径が 100 mm 以上で、値が 5 けたになるときなど)
+   */
+  function splitLines(label, vals, per = 15) {
+    const lines = [];
+    for (let i = 0; i < vals.length; i += per) {
+      let cur = '';
+      for (const v of vals.slice(i, i + per)) {
+        const next = cur ? cur + ';' + v : label + '=' + v;
+        if (cur && next.length > 80) { lines.push(cur); cur = label + '=' + v; }
+        else cur = next;
+      }
+      lines.push(cur);
+    }
+    return lines;
+  }
+
+  /**
    * 画像上の閉曲線(画素、y 下向き)から VCA の中身を作る。
    *   widthMM  玉形幅(A 寸、mm)。溝補正を足したあとの幅がこの値になるように縮尺を決める
    *   eye      写した眼('R' か 'L')。もう片方の眼は左右反転して書く
    *   groove   リムの内側の縁から溝の底までの補正(mm、外側へ広げる)
-   *   dbl, fcrv, job, n(点の数。既定 360)
+   *   dbl, fcrv, n(点の数。既定 360)
+   *   job      JOB の値。空なら ?。12 文字を超える・使えない文字があるときはエラー(jobValue)
    *   holes    写した眼の穴(縁なしフレームの取付穴)。[{ x, y, diameter, xEnd?, yEnd? }](mm、玉形の箱中心から、
    *            正面視で x 右・y 上)。もう片方の眼には左右反転して DRILLE に書く。空なら DRILLE=0
    * 返り値の toMM・toPx は、画像の画素と「箱中心からの mm」を行き来する(穴の表示に使う)。
    * holes には、中心(長穴は終点も)が書いた玉形の内側にあるかを inside に入れて返す。
    */
   function toVCA(ptsPx, opts) {
-    const o = Object.assign({ widthMM: 52, eye: 'R', groove: 0.5, dbl: 18, fcrv: 4, job: 'SHAPE', n: 360, holes: [] }, opts);
+    const o = Object.assign({ widthMM: 52, eye: 'R', groove: 0.5, dbl: 18, fcrv: 4, job: '', n: 360, holes: [] }, opts);
+    const job = jobValue(o.job);
+    // データの玉型の眼は R か L(B は要求・初期化だけ。5.4.12.3)
+    if (o.eye !== 'R' && o.eye !== 'L') throw new Error(`写した眼は R か L です(「${o.eye}」)`);
     const up = ptsPx.map(p => ({ x: p.x, y: -p.y }));
     const b0 = bbox(up);
     if (!(b0.w > 0) || !(b0.h > 0)) throw new Error('形がありません');
@@ -207,15 +244,15 @@
     const drills = o.eye === 'L' ? flipped.concat(plain) : plain.concat(flipped);   // 右眼を先に書く
     const recs = [];
     const both = v => `${fix(v)};${fix(v)}`;
-    recs.push('REQ=FIL', `JOB=${String(o.job || 'SHAPE').replace(/[\r\n;]/g, ' ').slice(0, 30)}`, `DBL=${fix(o.dbl)}`,
+    recs.push('REQ=FIL', `JOB=${job}`, `DBL=${fix(o.dbl)}`,
       `HBOX=${both(hbox)}`, `VBOX=${both(vbox)}`, `CIRC=${both(circ)}`, `FCRV=${both(o.fcrv)}`, ...drillRecords(drills));
     for (const e of ['R', 'L']) {
       recs.push(`TRCFMT=1;${o.n};E;${e};F`);
-      const vals = radii[e].map(r => Math.round(r * 100));
-      for (let i = 0; i < vals.length; i += 15) recs.push('R=' + vals.slice(i, i + 15).join(';'));
+      recs.push(...splitLines('R', radii[e].map(r => Math.round(r * 100))));
+      recs.push('ZFMT=0');   // サグ(Z)は無い。サグの無い両眼の玉型では、それぞれの R の後に ZFMT=0 を置く(5.4.1)
     }
     return { text: recs.join('\r\n') + '\r\n', hbox, vbox, circ, ed, radii, outline: mm, holes, drills, toMM, toPx };
   }
 
-  return { spline, bbox, area, perimeter, resampleArc, superellipse, polarRadii, offset, mirrorRadii, inside, mirrorHole, drillRecords, toVCA };
+  return { spline, bbox, area, perimeter, resampleArc, superellipse, polarRadii, offset, mirrorRadii, inside, mirrorHole, drillRecords, jobValue, toVCA };
 });

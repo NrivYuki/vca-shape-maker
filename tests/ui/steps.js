@@ -64,6 +64,14 @@ module.exports = async (t) => {
   await click('.tabs [data-pane=size]');
   await set('A', '52'); await set('npts', '360'); await set('eye', 'R'); await set('dbl', '18'); await raf(); await raf();
   ok(!(await text('msg')).includes('20-90'), '直すと誤りの知らせが消える');
+  // JOB(limited 型、12 文字まで。予約文字は使えない)。空なら JOB=?
+  await set('job', 'ABCDEFGHIJKLM'); await raf(); await raf();
+  ok((await text('msg')).includes('12 文字') && await t.eval(`${$('save')}.disabled`), 'JOB が 13 文字なら誤りと知らせ、保存できない: ' + await text('msg'));
+  await set('job', 'A;B'); await raf(); await raf();
+  ok((await text('msg')).includes('使えません'), 'JOB に ; があれば誤りと知らせる: ' + await text('msg'));
+  await set('job', ''); await raf(); await raf();
+  ok(!(await text('msg')).includes('JOB') && /\nJOB=\?\r?\n/.test(await t.eval(`${$('vca')}.value`)) && (await text('spec')).endsWith('JOB ?'), 'JOB が空なら誤りではなく JOB=? を書く');
+  await set('job', 'SHAPE-001'); await raf(); await raf();
 
   // 7. 元に戻す・やり直す・消す
   await click('.tabs [data-pane=shape]');

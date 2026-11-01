@@ -644,6 +644,10 @@ function renderHoles() {
     box.append(row);
   });
 }
+/** JOB の入力の誤り(無ければ空)。空のときは不明値 ? を書く */
+function jobError() {
+  try { Shape.jobValue($('job').value); return ''; } catch (x) { return x.message; }
+}
 /** 穴の入力の誤り(無ければ空) */
 function holeError() {
   for (let i = 0; i < st.holes.length; i++) {
@@ -672,9 +676,9 @@ function updateOutput() {
   else if (!(dbl >= 0 && dbl <= 40)) err = 'DBL は 0-40 mm で入れてください';
   else if (!(groove >= 0 && groove <= 2)) err = '溝の補正は 0-2 mm で入れてください';
   else if (!(fcrv >= 0 && fcrv <= 12)) err = 'フレームカーブは 0-12 で入れてください';
-  else err = holeError();
+  else err = jobError() || holeError();
   if (st.ctrl.length >= 3 && !err) {
-    try { st.out = Shape.toVCA(Shape.spline(st.ctrl, 24), { widthMM: A, dbl, groove, fcrv, n: +$('npts').value, eye: $('eye').value, job: $('job').value.trim() || 'SHAPE', holes: st.holes }); }
+    try { st.out = Shape.toVCA(Shape.spline(st.ctrl, 24), { widthMM: A, dbl, groove, fcrv, n: +$('npts').value, eye: $('eye').value, job: $('job').value, holes: st.holes }); }
     catch (x) { err = x.message; }
   }
   const v = st.out;
@@ -698,7 +702,7 @@ function updateOutput() {
     ['縦横比 B / A', (v.vbox / v.hbox).toFixed(3)],
   ].map(([k, x]) => `<tr><td>${k}</td><td>${x}</td></tr>`).join('') : '';
   $('vca').value = v ? v.text : '';
-  $('spec').textContent = [$('eye').selectedOptions[0].textContent.split('(')[0], `A ${A} mm`, `DBL ${dbl} mm`, `フレームカーブ ${fcrv} D`, `${$('npts').value} 点`, `JOB ${$('job').value.trim() || 'SHAPE'}`].join(' / ');
+  $('spec').textContent = [$('eye').selectedOptions[0].textContent.split('(')[0], `A ${A} mm`, `DBL ${dbl} mm`, `フレームカーブ ${fcrv} D`, `${$('npts').value} 点`, `JOB ${$('job').value.trim() || '?'}`].join(' / ');
   $('sum').innerHTML = v ? `<span>玉形 <b>${v.hbox.toFixed(2)}</b> × <b>${v.vbox.toFixed(2)}</b> mm</span><span>有効径 ED <b>${v.ed.toFixed(2)}</b> mm</span><span>周長 <b>${v.circ.toFixed(2)}</b> mm</span>${v.holes.length ? `<span>穴 <b>${v.holes.length}</b> か所 / 眼</span>` : ''}` : `<span>${st.ctrl.length >= 3 ? '入力を直すと' : '形を作ると'}、ここに寸法が出ます</span>`;
   drawPreview(v); updateButtons();
 }

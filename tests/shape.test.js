@@ -188,3 +188,14 @@ test('toVCA: 穴の中心が玉形の外なら inside が false。toMM と toPx 
   assert.ok(q.x > 0 && q.y > 0);
   const p = v.toPx(q); near(p.x, 300, 1e-9); near(p.y, 150, 1e-9);
 });
+
+test('toVCA: R の行は 15 個ずつ。80 文字を超える行(半径が 100 mm 以上)だけ分ける', () => {
+  const px = Shape.superellipse({ x0: 100, y0: 100, x1: 400, y1: 320 }, [3, 3, 3, 3]);
+  const counts = w => Shape.toVCA(px, { widthMM: w, n: 360 }).text.match(/^R=[^\r]*/gm).map(l => [l.length, l.split(';').length]);
+  const small = counts(52);
+  assert.equal(small.length, 48);
+  assert.ok(small.every(([, k]) => k === 15));
+  const big = counts(250);
+  assert.ok(big.length > 48 && big.every(([len, k]) => len <= 80 && k <= 15));
+  assert.equal(big.reduce((s, [, k]) => s + k, 0), 720);
+});
