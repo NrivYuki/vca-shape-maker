@@ -139,20 +139,24 @@ spec('最初の半径は 0°(3 時)で、続きは反時計回り(5.4.10)',
   { req: ['R036'], kind: ['正常'], side: '送る' }, () => {
     // 屋根の頂点が左寄りの五角形(y 上向きで (0,0) (10,0) (10,6) (3,10) (0,6))。箱の中心 (5,5) から、
     // 0° は右の辺まで 5、45°(右上)は屋根まで 3.47、90° は屋根まで 3.86、315°(右下の角)は 7.07。
-    // A 寸 50 mm・溝の補正 0 なので mm ではこの 5 倍。時計回りに並べると 45° の位置に 315° の値が来る
+    // A 寸 50 mm・溝の補正 0 なので mm ではこの 5 倍。時計回りに並べると 45° の位置に 315° の値が来る。
+    // 原点は書いた点の箱の中心に合わせ直す(5.4.8)ので、形の箱の中心から 0.05 mm ほど動く。許容差はそれを含めて 0.1 mm
     const house = [{ x: 0, y: 10 }, { x: 10, y: 10 }, { x: 10, y: 4 }, { x: 3, y: 0 }, { x: 0, y: 4 }];
     const n = 360, r = traces(Shape.toVCA(house, { widthMM: 50, groove: 0, n, job: 'T1' }).text)[0].values.map(v => +v / 100);
     const at = deg => r[(deg * n) / 360];
     assert.ok(Math.abs(at(0) - 25) <= 0.01, `0°: ${at(0)}`);
-    assert.ok(Math.abs(at(45) - 17.35) <= 0.05, `45°: ${at(45)}`);
-    assert.ok(Math.abs(at(90) - 19.29) <= 0.05, `90°: ${at(90)}`);
-    assert.ok(Math.abs(at(315) - 35.36) <= 0.05, `315°: ${at(315)}`);
+    assert.ok(Math.abs(at(45) - 17.35) <= 0.1, `45°: ${at(45)}`);
+    assert.ok(Math.abs(at(90) - 19.29) <= 0.1, `90°: ${at(90)}`);
+    assert.ok(Math.abs(at(315) - 35.36) <= 0.1, `315°: ${at(315)}`);
   });
 
-spec('半径の原点は箱の中心。書いた半径から求めた箱の中心が原点から 0.01 mm 以内(5.4.8)',
-  { req: ['R028'], kind: ['正常'], side: '送る' }, () => {
-    for (const eye of ['R', 'L']) {
-      for (const t of traces(vca({ eye, n: 360 }).text)) {
+spec('半径の原点は箱の中心。書いた半径から求めた箱の中心が原点から 0.01 mm 以内。角のとがった形でも(5.4.8)',
+  { req: ['R028'], kind: ['正常', '境界'], side: '送る' }, () => {
+    const house = [{ x: 0, y: 10 }, { x: 10, y: 10 }, { x: 10, y: 4 }, { x: 3, y: 0 }, { x: 0, y: 4 }];
+    const texts = [];
+    for (const eye of ['R', 'L']) for (const n of [360, 400, 1000, 1440]) texts.push(vca({ eye, n }).text, Shape.toVCA(house, { widthMM: 50, groove: 0, eye, n, job: 'T1' }).text);
+    for (const text of texts) {
+      for (const t of traces(text)) {
         const p = points(t.values), xs = p.map(q => q.x), ys = p.map(q => q.y);
         const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
         assert.ok(Math.abs(cx) <= 0.01 && Math.abs(cy) <= 0.01, `${t.fmt[3]}: (${cx}, ${cy})`);

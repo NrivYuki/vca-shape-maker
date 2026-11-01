@@ -60,7 +60,7 @@ node tests/ui/cdp.js index.html tests/ui/steps.js
 - 画像を置く・選ぶ・貼り付け(Ctrl+V)での読み込み
 - 点のドラッグ・ダブルクリックでの追加と削除・箱の四隅と辺での伸び縮み(Shift で縦横比を保つ)
 - ホイールでの拡大・右ドラッグでの移動
-- 保存した VCA を VCA Lens Simulator で読み込み、形と向きが合うか。穴があれば、穴が入力どおりの位置(右眼は +x が鼻側)に描かれるか
+- 保存した VCA を VCA Lens Simulator の画面で見て、形と向きが合って見えるか(値が合うかは、vca-lens-simulator の `tests/flow.test.js` と `tests/ui/flow.js` が、この画面で作った VCA を vca-ptn-converter を通して読み込んで確かめる)
 - 穴のドラッグ・画像の上で置く操作を、実際のマウスで(拡大した状態も含めて)
 
 ## 4. 仕様として残しているもの

@@ -227,16 +227,26 @@
     if (!(s > 0)) throw new Error('玉形幅が溝補正に対して小さすぎます');
     const mm = offset(up.map(p => ({ x: (p.x - b0.cx) * s, y: (p.y - b0.cy) * s })), o.groove);
     const bb = bbox(mm);
-    // R レコードに書くのは 1/100 mm に丸めた半径。寸法もこの丸めた半径から計算して、書いた形と合わせる
-    const traced = polarRadii(mm, o.n, bb.cx, bb.cy).map(r => Math.round(r * 100) / 100);
+    // R レコードに書くのは 1/100 mm に丸めた半径。寸法もこの丸めた半径から計算して、書いた形と合わせる。
+    // 半径の原点は、書いた半径の箱の中心(5.4.8)。点と点の間にある角は測られないので、形の箱の中心と書いた点の箱の中心は
+    // 食い違う(角のとがった形を 360 点で書くと 0.05 mm ほど)。書いた点の箱の中心が R の 1 単位の半分(0.005 mm)に収まるまで合わせ直す
+    let c = { x: bb.cx, y: bb.cy }, best = null;
+    for (let k = 0; k < 8; k++) {
+      const traced = polarRadii(mm, o.n, c.x, c.y).map(r => Math.round(r * 100) / 100);
+      const written = traced.map((r, i) => ({ x: r * Math.cos((2 * Math.PI * i) / o.n), y: r * Math.sin((2 * Math.PI * i) / o.n) }));
+      const wb = bbox(written), off = Math.hypot(wb.cx, wb.cy);
+      if (!best || off < best.off) best = { traced, written, wb, off, c };
+      if (off <= 0.005) break;
+      c = { x: c.x + wb.cx, y: c.y + wb.cy };
+    }
+    const { traced, written, wb } = best;
+    c = best.c;
     const other = mirrorRadii(traced);
     const radii = o.eye === 'L' ? { R: other, L: traced } : { R: traced, L: other };
-    const written = traced.map((r, i) => ({ x: r * Math.cos((2 * Math.PI * i) / o.n), y: r * Math.sin((2 * Math.PI * i) / o.n) }));
-    const wb = bbox(written);
     const hbox = wb.w, vbox = wb.h, circ = perimeter(written), ed = 2 * Math.max(...traced);
     // 穴の座標は、半径を測った中心(箱中心)からの mm
-    const toMM = p => ({ x: (p.x - b0.cx) * s - bb.cx, y: (-p.y - b0.cy) * s - bb.cy });
-    const toPx = q => ({ x: (q.x + bb.cx) / s + b0.cx, y: -((q.y + bb.cy) / s + b0.cy) });
+    const toMM = p => ({ x: (p.x - b0.cx) * s - c.x, y: (-p.y - b0.cy) * s - c.y });
+    const toPx = q => ({ x: (q.x + c.x) / s + b0.cx, y: -((q.y + c.y) / s + b0.cy) });
     const holes = (o.holes || []).map(h => Object.assign({}, h, { eye: o.eye,
       inside: inside(written, +h.x, +h.y) && (!isSlot(h) || inside(written, +h.xEnd, +h.yEnd)) }));
     const plain = holes.map(({ inside: _, ...h }) => h);
